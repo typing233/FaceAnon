@@ -3,12 +3,14 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass
-from typing import Iterator
 
 import cv2
 import numpy as np
 
-from .engine import FaceAnonEngine
+from .anonymizer import Anonymizer
+from .config import EngineConfig
+from .detector import CenterFaceDetector
+from .tracker import SORTTracker
 
 
 @dataclass
@@ -21,12 +23,17 @@ class RealtimeConfig:
 
 
 class RealtimeProcessor:
-    def __init__(self, engine: FaceAnonEngine, config: RealtimeConfig | None = None):
-        self._engine = engine
+    def __init__(self, engine_config: EngineConfig | None = None, config: RealtimeConfig | None = None):
+        self._engine_config = engine_config or EngineConfig()
         self._config = config or RealtimeConfig()
         self._stop_event = threading.Event()
         self._cap: cv2.VideoCapture | None = None
         self._writer: cv2.VideoWriter | None = None
+
+        self._latest_frame: np.ndarray | None = None
+        self._frame_lock = threading.Lock()
+        self._frame_ready = threading.Event()
+        self._capture_thread: threading.Thread | None = None
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -42,28 +49,57 @@ class RealtimeProcessor:
 
         width = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        fps = self._cap.get(cv2.CAP_PROP_FPS) or 30.0
+        src_fps = self._cap.get(cv2.CAP_PROP_FPS) or 30.0
 
         if cfg.output_path:
             fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            out_fps = cfg.max_fps if cfg.max_fps > 0 else src_fps
             self._writer = cv2.VideoWriter(
-                cfg.output_path, fourcc, fps, (width, height)
+                cfg.output_path, fourcc, out_fps, (width, height)
             )
+
+        detector = CenterFaceDetector(self._engine_config.detector, use_gpu=self._engine_config.use_gpu)
+        tracker = SORTTracker(self._engine_config.tracker)
+        anonymizer = Anonymizer(self._engine_config.anonymizer)
+        detect_every_n = self._engine_config.detect_every_n
 
         min_frame_time = 1.0 / cfg.max_fps if cfg.max_fps > 0 else 0.0
         fps_counter = _FPSCounter()
 
+        self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self._capture_thread.start()
+
+        frame_idx = 0
         try:
-            for result in self._engine.process_video_frames(self._frame_generator()):
-                frame = result.anonymized_frame
-                if frame is None:
+            while not self._stop_event.is_set():
+                if not self._frame_ready.wait(timeout=1.0):
+                    if self._stop_event.is_set():
+                        break
                     continue
 
+                with self._frame_lock:
+                    frame = self._latest_frame
+                    self._latest_frame = None
+                    self._frame_ready.clear()
+
+                if frame is None:
+                    break
+
+                loop_start = time.perf_counter()
+
+                if frame_idx % detect_every_n == 0:
+                    detections = detector.detect(frame)
+                    tracks = tracker.update(detections)
+                else:
+                    tracks = tracker.predict_only()
+
+                anonymized = anonymizer.anonymize(frame, tracks)
+                frame_idx += 1
                 fps_counter.tick()
 
                 if cfg.display:
                     display_frame = self._draw_overlay(
-                        frame, fps_counter.fps, len(result.tracks)
+                        anonymized, fps_counter.fps, len(tracks)
                     )
                     cv2.imshow(cfg.window_name, display_frame)
                     key = cv2.waitKey(1) & 0xFF
@@ -71,21 +107,28 @@ class RealtimeProcessor:
                         break
 
                 if self._writer is not None:
-                    self._writer.write(frame)
+                    self._writer.write(anonymized)
 
                 if min_frame_time > 0:
-                    elapsed = fps_counter.last_elapsed
+                    elapsed = time.perf_counter() - loop_start
                     if elapsed < min_frame_time:
                         time.sleep(min_frame_time - elapsed)
         finally:
+            self._stop_event.set()
             self._cleanup()
 
-    def _frame_generator(self) -> Iterator[np.ndarray]:
+    def _capture_loop(self) -> None:
         while not self._stop_event.is_set():
             ret, frame = self._cap.read()
             if not ret:
+                self._stop_event.set()
+                with self._frame_lock:
+                    self._latest_frame = None
+                self._frame_ready.set()
                 break
-            yield frame
+            with self._frame_lock:
+                self._latest_frame = frame
+            self._frame_ready.set()
 
     def _draw_overlay(
         self, frame: np.ndarray, fps: float, face_count: int
@@ -98,6 +141,8 @@ class RealtimeProcessor:
         return display
 
     def _cleanup(self) -> None:
+        if self._capture_thread is not None and self._capture_thread.is_alive():
+            self._capture_thread.join(timeout=2.0)
         if self._cap is not None:
             self._cap.release()
             self._cap = None

@@ -124,7 +124,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def cmd_realtime(args: argparse.Namespace, engine: FaceAnonEngine) -> int:
+def cmd_realtime(args: argparse.Namespace, engine_config: EngineConfig) -> int:
     source: int | str = args.source
     try:
         source = int(source)
@@ -137,7 +137,7 @@ def cmd_realtime(args: argparse.Namespace, engine: FaceAnonEngine) -> int:
         display=not args.no_display,
         max_fps=args.max_fps,
     )
-    processor = RealtimeProcessor(engine, config)
+    processor = RealtimeProcessor(engine_config, config)
     try:
         processor.run()
     except IOError as e:
@@ -220,14 +220,19 @@ def main() -> int:
         return 0
 
     engine_config = build_engine_config(args)
+
+    if args.command == "realtime":
+        return cmd_realtime(args, engine_config)
+
     engine = FaceAnonEngine(engine_config)
 
     commands = {
-        "realtime": cmd_realtime,
         "batch": cmd_batch,
         "image": cmd_image,
         "video": cmd_video,
     }
+
+    return commands[args.command](args, engine)
 
     return commands[args.command](args, engine)
 

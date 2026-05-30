@@ -3,8 +3,10 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Iterator
 
 import cv2
+import numpy as np
 
 from .engine import FaceAnonEngine
 
@@ -118,26 +120,52 @@ class BatchProcessor:
         image = cv2.imread(str(input_path))
         if image is None:
             raise IOError(f"Cannot read image: {input_path}")
+
         result = self._engine.process_image(image)
-        cv2.imwrite(str(output_path), result.anonymized_frame)
+
+        success = cv2.imwrite(str(output_path), result.anonymized_frame)
+        if not success:
+            raise IOError(f"Failed to write image: {output_path}")
 
     def _process_video(self, input_path: Path, output_path: Path) -> None:
-        progress_bar = None
+        cap = cv2.VideoCapture(str(input_path))
+        if not cap.isOpened():
+            raise IOError(f"Cannot open video: {input_path}")
 
-        def _callback(frame_idx: int, total: int, _result) -> None:
-            nonlocal progress_bar
-            if tqdm and progress_bar is None and total > 0:
-                progress_bar = tqdm(
-                    total=total,
-                    desc=f"  {input_path.name}",
-                    unit="frame",
-                    leave=False,
-                )
-            if progress_bar is not None:
-                progress_bar.update(1)
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
+        if not writer.isOpened():
+            cap.release()
+            raise IOError(f"Failed to open video writer: {output_path}")
+
+        progress_bar = None
+        if tqdm and total > 0:
+            progress_bar = tqdm(
+                total=total, desc=f"  {input_path.name}", unit="frame", leave=False
+            )
+
+        def _frame_iter() -> Iterator[np.ndarray]:
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                yield frame
 
         try:
-            self._engine.process_video(str(input_path), str(output_path), _callback)
+            for result in self._engine.process_video_frames(_frame_iter()):
+                writer.write(result.anonymized_frame)
+                if progress_bar is not None:
+                    progress_bar.update(1)
         finally:
+            cap.release()
+            writer.release()
             if progress_bar is not None:
                 progress_bar.close()
+
+        if not output_path.exists() or output_path.stat().st_size == 0:
+            raise IOError(f"Video output is empty or missing: {output_path}")
