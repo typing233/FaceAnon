@@ -9,11 +9,16 @@ dependencies = [
     "onnxruntime>=1.16",
     "scipy>=1.10",
     "onnx>=1.14",
+    "tqdm>=4.60",
 ]
+
+[project.scripts]
+faceanon = "faceanon.cli:main"
 
 [project.optional-dependencies]
 gpu = ["onnxruntime-gpu>=1.16"]
 dev = ["pytest>=7.0"]
+packaging = ["pyinstaller>=6.0"]
 
 [build-system]
 requires = ["setuptools>=68.0"]
