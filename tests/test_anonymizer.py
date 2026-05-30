@@ -38,12 +38,13 @@ class TestAnonymizer:
         assert result.shape == img.shape
         assert not np.array_equal(result[50:100, 50:100], img[50:100, 50:100])
 
-    def test_skips_non_confirmed(self):
+    def test_anonymizes_all_states(self):
         anon = Anonymizer()
         img = _make_image()
-        track = _make_track(state="tentative")
-        result = anon.anonymize(img, [track])
-        assert np.array_equal(result, img)
+        for state in ("tentative", "confirmed", "lost"):
+            track = _make_track(state=state)
+            result = anon.anonymize(img, [track])
+            assert not np.array_equal(result[50:100, 50:100], img[50:100, 50:100])
 
     def test_intensity_affects_output(self):
         img = _make_image()

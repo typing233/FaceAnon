@@ -16,8 +16,6 @@ class Anonymizer:
         img_h, img_w = output.shape[:2]
 
         for track in tracks:
-            if track.state == "tentative":
-                continue
             x1, y1, x2, y2 = self._expand_bbox(track.bbox, img_h, img_w)
             if x2 <= x1 or y2 <= y1:
                 continue
