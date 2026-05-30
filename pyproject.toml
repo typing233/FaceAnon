@@ -1,0 +1,23 @@
+[project]
+name = "faceanon"
+version = "0.1.0"
+description = "Face detection, tracking and anonymization engine based on CenterFace"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+    "opencv-python>=4.8",
+    "onnxruntime>=1.16",
+    "scipy>=1.10",
+    "onnx>=1.14",
+]
+
+[project.optional-dependencies]
+gpu = ["onnxruntime-gpu>=1.16"]
+dev = ["pytest>=7.0"]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["faceanon*"]
