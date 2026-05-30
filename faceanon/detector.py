@@ -70,13 +70,13 @@ class CenterFaceDetector:
         scores = heatmap[rows, cols]
         ox = offset[0, rows, cols]
         oy = offset[1, rows, cols]
-        sw = scale[0, rows, cols]
-        sh = scale[1, rows, cols]
+        sh = scale[0, rows, cols]  # height (log-space)
+        sw = scale[1, rows, cols]  # width (log-space)
 
-        cx = (cols + ox) * stride
-        cy = (rows + oy) * stride
-        w = sw * stride
-        h = sh * stride
+        cx = (cols + oy + 0.5) * stride
+        cy = (rows + ox + 0.5) * stride
+        w = np.exp(sw) * stride
+        h = np.exp(sh) * stride
 
         x1 = (cx - w / 2) / scale_w
         y1 = (cy - h / 2) / scale_h
@@ -97,8 +97,8 @@ class CenterFaceDetector:
             if landmarks_raw is not None:
                 lm_x = landmarks_raw[0:10:2, rows[i], cols[i]]
                 lm_y = landmarks_raw[1:10:2, rows[i], cols[i]]
-                lm_x = (cols[i] + lm_x) * stride / scale_w
-                lm_y = (rows[i] + lm_y) * stride / scale_h
+                lm_x = (cols[i] + lm_x + 0.5) * stride / scale_w
+                lm_y = (rows[i] + lm_y + 0.5) * stride / scale_h
                 lms = np.stack([lm_x, lm_y], axis=1)  # (5, 2)
 
             detections.append(
